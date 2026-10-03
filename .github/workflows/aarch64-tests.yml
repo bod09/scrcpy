@@ -1,0 +1,130 @@
+# Fork-only: tests the release artifacts produced by a release.yml run.
+# Not part of the upstream PR.
+name: Test Linux releases
+
+on:
+  push:
+    branches: [aarch64-tests]
+
+env:
+  # release.yml run to test (edit and push to retest)
+  RELEASE_RUN_ID: "37141788641"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+          - arch: x86_64
+            runner: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Download release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$RELEASE_RUN_ID" -R "$GITHUB_REPOSITORY" \
+              -n release-linux-${{ matrix.arch }} -D release
+          ls -l release
+          sha256sum release/*
+          mkdir x && tar xf release/scrcpy-linux-${{ matrix.arch }}-*.tar.gz -C x --strip-components=1
+          ls -l x
+
+      - name: Inspect binaries
+        run: |
+          cd x
+          for bin in scrcpy adb
+          do
+              echo "=== $bin"
+              file "$bin"
+              ls -l "$bin"
+              echo "NEEDED: $(readelf -d "$bin" | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p' | sort | tr '\n' ' ')"
+              echo "MAX_GLIBC: $(readelf -V "$bin" | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1)"
+          done
+
+      - name: Run on the runner itself
+        run: |
+          cd x
+          uname -m
+          ./scrcpy --version
+          ./adb version
+          ./adb start-server
+          ./adb devices
+          ./adb kill-server
+
+  distros:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [aarch64, x86_64]
+        image:
+          - debian:stable
+          - debian:oldstable
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - fedora:latest
+          - opensuse/tumbleweed
+          - archlinux
+        include:
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-24.04
+        exclude:
+          # The official Arch Linux image is x86_64 only
+          - arch: aarch64
+            image: archlinux
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Download release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$RELEASE_RUN_ID" -R "$GITHUB_REPOSITORY" \
+              -n release-linux-${{ matrix.arch }} -D release
+          mkdir x && tar xf release/scrcpy-linux-${{ matrix.arch }}-*.tar.gz -C x --strip-components=1
+
+      - name: Run in a clean container
+        run: |
+          docker run --rm -v "$PWD/x:/scrcpy:ro" ${{ matrix.image }} sh -c '
+              set -ex
+              uname -m
+              cat /etc/os-release | head -2
+              cd /scrcpy
+              ./adb version
+              ./adb start-server
+              ./adb devices
+              ./adb kill-server
+              ./scrcpy --version
+          '
+
+  distros-archlinuxarm:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Download release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$RELEASE_RUN_ID" -R "$GITHUB_REPOSITORY" \
+              -n release-linux-aarch64 -D release
+          mkdir x && tar xf release/scrcpy-linux-aarch64-*.tar.gz -C x --strip-components=1
+
+      - name: Run in a clean container
+        run: |
+          docker run --rm -v "$PWD/x:/scrcpy:ro" menci/archlinuxarm:latest sh -c '
+              set -ex
+              uname -m
+              cd /scrcpy
+              ./adb version
+              ./adb start-server
+              ./adb devices
+              ./adb kill-server
+              ./scrcpy --version
+          '
