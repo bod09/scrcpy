@@ -8,7 +8,7 @@ on:
 
 env:
   # release.yml run to test (edit and push to retest)
-  RELEASE_RUN_ID: "37153088509"
+  RELEASE_RUN_ID: "37497190847"
 
 permissions:
   actions: read
